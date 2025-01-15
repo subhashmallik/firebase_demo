@@ -1,7 +1,98 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
 
-void main() {
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+const AndroidNotificationChannel channel = AndroidNotificationChannel(
+  'high_importance_channel',
+  'High Importance Channel',
+  description: 'This channel is used for important notifications',
+  importance: Importance.high,
+  playSound: true,
+);
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+FlutterLocalNotificationsPlugin();
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: 'AIzaSyCl5b8WMjtFR61Fn5eP7U20PIXb4ngbm-E',
+        appId: '1:220078504281:android:695cc5888fa40beb363448',
+        messagingSenderId: '220078504281',
+        projectId: 'fir-demo-36209',
+      ));
+  debugPrint(
+      'Handling a background message $message');
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: 'AIzaSyCl5b8WMjtFR61Fn5eP7U20PIXb4ngbm-E',
+        appId: '1:220078504281:android:695cc5888fa40beb363448',
+        messagingSenderId: '220078504281',
+        projectId: 'fir-demo-36209',
+      ));
+  FlutterError.onError = (errorDetails) {
+    FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+  };
+  // Pass all uncaught asynchronous errors that aren't handled by the Flutter framework to Crashlytics
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    return true;
+  };
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const MyApp());
+
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  final List<DarwinNotificationCategory> darwinNotificationCategories =
+  <DarwinNotificationCategory>[
+    DarwinNotificationCategory(
+      "textCategory",
+      actions: <DarwinNotificationAction>[
+        DarwinNotificationAction.text(
+          'text_1',
+          'Action 1',
+          buttonTitle: 'Send',
+          placeholder: 'Placeholder',
+        ),
+      ],
+    ),
+  ];
+  final DarwinInitializationSettings initializationSettingsDarwin =
+  DarwinInitializationSettings(
+    requestAlertPermission: false,
+    requestBadgePermission: false,
+    requestSoundPermission: false,
+    notificationCategories: darwinNotificationCategories,
+  );
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsDarwin,
+    macOS: initializationSettingsDarwin,
+  );
+  if (Platform.isAndroid || Platform.isIOS) {
+    FirebaseMessaging? messaging;
+    messaging = FirebaseMessaging.instance;
+    await messaging.requestPermission();
+    if (Platform.isAndroid) {
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
+    }
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+        alert: true, badge: true, sound: true);
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -66,8 +157,66 @@ class _MyHomePageState extends State<MyHomePage> {
       // called again, and so nothing would appear to happen.
       _counter++;
     });
+    throw Exception();
   }
 
+  //Get Firebase message token
+  void getFCMToken() {
+    FirebaseMessaging firebaseMessaging = FirebaseMessaging.instance;
+    firebaseMessaging.getToken().then((token) async {
+      debugPrint("FCM token --- $token ");
+    });
+  }
+
+  //Firebase remote config setup
+  void remoteConfig() async{
+    final remoteConfig = FirebaseRemoteConfig.instance;
+    await remoteConfig.setConfigSettings(RemoteConfigSettings(
+      fetchTimeout: const Duration(seconds: 5),
+      minimumFetchInterval: const Duration(seconds: 5),
+    ));
+    await remoteConfig.fetchAndActivate();
+    debugPrint("App version code ${ remoteConfig.getDouble("app_version")}");
+    remoteConfig.onConfigUpdated.listen((event) async {
+      await remoteConfig.activate();
+      // Use the new config values here.
+      debugPrint("App version code -- ${ remoteConfig.getDouble("app_version")}");
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    getFCMToken();
+    // Stream listener
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message){
+      showFCMNotification(message);
+    });
+    // currently user is using your app, and suddenly get notification. you will listen it here:
+    FirebaseMessaging.onMessage.listen(
+          (RemoteMessage message) {
+        showFCMNotification( message);
+      },
+    );
+    remoteConfig();
+  }
+  void showFCMNotification(RemoteMessage message){
+    RemoteNotification? notification = message.notification;
+    AndroidNotification? android = message.notification?.android;
+    if (notification != null && android != null) {
+      flutterLocalNotificationsPlugin.show(
+          notification.hashCode,
+          notification.title,
+          notification.body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              channel.id,
+              channel.name,
+              icon: '@mipmap/ic_launcher',
+            ),
+          ));
+    }
+  }
   @override
   Widget build(BuildContext context) {
     // This method is rerun every time setState is called, for instance as done
